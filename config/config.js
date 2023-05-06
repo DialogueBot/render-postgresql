@@ -1,3 +1,5 @@
+import dotenv from 'dotenv'
+dotenv.config()
 import url from 'url'
 import path from 'path'
 import fs from 'fs/promises'
@@ -9,8 +11,8 @@ import { createHash } from 'crypto'
 
 const config = () => {
     const client = new pg.Client({
-        host: 'localhost',
-        database: 'node_first',
+        host: process.env.PSQL_HOST,
+        database: process.env.PSQL_DATABASE,
         // port: 5432,
         // user: 'andrewjudd',
         // password: 'Bybhlfef15&'
@@ -96,9 +98,12 @@ const config = () => {
                     controller: async (req, res) => {
                         let html = main({ title: 'Todo List', components: [() => todo_page(database)] })
                         const sw = /<script[\s\S]*?>([\s\S]*?)<\/script>/gm
-                        const hash = `sha256-${createHash("sha256").update(sw.exec(html)[1]).digest('base64')}`
-                        html = html.replace('{{EXTRA_SHAS}}', hash)
-                        res.setHeader("Content-Security-Policy", `default-src 'self'; script-src '${hash}'; style-src 'sha256-Nqnn8clbgv+5l0PgxcTOldg8mkMKrFn4TvPL+rYUUGg='`);
+                        const stw = /<style[\s\S]*?>([\s\S]*?)<\/style>/gm
+                        const script_hash = `sha256-${createHash("sha256").update(sw.exec(html)[1]).digest('base64')}`
+                        const style_hash = `sha256-${createHash("sha256").update(stw.exec(html)[1]).digest('base64')}`
+                        html = html.replace('{{SCRIPT_SHAS}}', script_hash)
+                        html = html.replace('{{STYLE_SHAS}}', style_hash)
+                        res.setHeader("Content-Security-Policy", `default-src 'self'; script-src '${script_hash}'; style-src '${style_hash}'`);
                         res.status(200).send(html)
                     }
                 }
