@@ -9,29 +9,38 @@ import pg from 'pg'
 import { createHash } from 'crypto'
 
 
-const config = () => {
-    const client = new pg.Client({
+const config = async () => {
+
+    const Pool = pg.Pool
+    const pool = new Pool({
         host: process.env.PSQL_HOST,
         database: process.env.PSQL_DATABASE,
+        max: 20,
+        idleTimeoutMillis: 30000,
+        connectionTimeoutMillis: 2000,
         // port: 5432,
         // user: 'andrewjudd',
         // password: 'Bybhlfef15&'
     })
-    client
-        .connect()
-        .then(() => console.log('connected'))
-        .catch((err) => console.error('connection error', err.stack))
-    const database = {}
-    for (const key in todo) {
-        database['todo'] = {}
-        database['todo'][key] = async () => {
-            const data = await todo[key](client)
-            return data
-        }
+
+    const query = async (text, params) => {
+        const start = Date.now()
+        const res = await pool.query(text, params)
+        const duration = Date.now() - start
+        console.log('executed query', { text, duration, rows: res.rowCount })
+        return res
     }
 
-    const csp = (html) => {
+    const csp = async (html, res) => {
 
+        const sw = /<script[\s\S]*?>([\s\S]*?)<\/script>/gm
+        const stw = /<style[\s\S]*?>([\s\S]*?)<\/style>/gm
+        const script_hash = `sha256-${createHash("sha256").update(sw.exec(await html)[1]).digest('base64')}`
+        const style_hash = `sha256-${createHash("sha256").update(stw.exec(await html)[1]).digest('base64')}`
+        html = (await html).replace('{{SCRIPT_SHAS}}', script_hash)
+        html = (await html).replace('{{STYLE_SHAS}}', style_hash)
+        res.setHeader("Content-Security-Policy", `default-src 'self'; script-src '${script_hash}'; style-src '${style_hash}'`);
+        res.status(200).send(html)
     }
 
     const routers = [
@@ -42,8 +51,7 @@ const config = () => {
                     route: '/',
                     method: 'GET',
                     controller: async (req, res) => {
-                        database.todo.get_todo()
-                        res.status(200).send(main({ title: 'home', components: [nav] }))
+                        csp(main({ title: 'home', components: [nav] }), res)
                     },
                     middleware: async (req, res, next) => {
                         next()
@@ -56,10 +64,10 @@ const config = () => {
                     controller: async (req, res) => {
                         try {
 
-                            const data = await client.query(`SELECT * from users where user_name = $1`, ['andrewjudd'])
+                            const data = await pool.query(`SELECT * from users where user_name = $1`, ['andrewjudd'])
                             // client.end()
                             console.log(data.rows)
-                            res.status(200).send(main({ title: 'home', components: [nav] }))
+                            csp(main({ title: 'home', components: [nav] }), res)
                         } catch (error) {
                             console.log(error)
                             res.send(error)
@@ -74,7 +82,7 @@ const config = () => {
                     route: '/about',
                     method: 'GET',
                     controller: async (req, res) => {
-                        res.status(200).send(main({ title: 'about', components: [nav] }))
+                        csp(await main({ title: 'about', components: [nav] }), res)
                     },
                     middleware: async (req, res, next) => {
                         next()
@@ -85,7 +93,7 @@ const config = () => {
                     route: '/projects',
                     method: 'GET',
                     controller: async (req, res) => {
-                        res.status(200).send(main({ title: 'projects', components: [nav] }))
+                        csp(main({ title: 'projects', components: [nav] }), res)
                     },
                     middleware: async (req, res, next) => {
                         next()
@@ -96,21 +104,13 @@ const config = () => {
                     route: '/todo',
                     method: 'GET',
                     controller: async (req, res) => {
-                        let html = main({ title: 'Todo List', components: [() => todo_page(database)] })
-                        const sw = /<script[\s\S]*?>([\s\S]*?)<\/script>/gm
-                        const stw = /<style[\s\S]*?>([\s\S]*?)<\/style>/gm
-                        const script_hash = `sha256-${createHash("sha256").update(sw.exec(html)[1]).digest('base64')}`
-                        const style_hash = `sha256-${createHash("sha256").update(stw.exec(html)[1]).digest('base64')}`
-                        html = html.replace('{{SCRIPT_SHAS}}', script_hash)
-                        html = html.replace('{{STYLE_SHAS}}', style_hash)
-                        res.setHeader("Content-Security-Policy", `default-src 'self'; script-src '${script_hash}'; style-src '${style_hash}'`);
-                        res.status(200).send(html)
+                        csp(main({ title: 'Todo List', components: [nav, async () => await todo_page(database)] }), res)
                     }
                 }
             ]
         },
         {
-            route: '/posts',
+            route: '/api/v1',
             routes: [
                 {
                     route: '/first',
@@ -122,6 +122,26 @@ const config = () => {
             ]
         }
     ]
+
+    const create_db_endpoint = async ({ route, method, controller }) => {
+        routers[1].routes.push({
+            route: `${route}`,
+            method,
+            controller
+        })
+    }
+
+    // file imports
+    const database_paths = [{ path: 'todo', funcs: todo }]
+
+    let database = {}
+    for (const { path, funcs } of database_paths) {
+        console.log(path)
+        database[path] = {}
+        for (const key in funcs) {
+            await funcs[key](query, create_db_endpoint)
+        }
+    }
 
     return { routers, database }
 }

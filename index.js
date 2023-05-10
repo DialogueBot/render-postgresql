@@ -20,7 +20,7 @@ app.options('*', cors())
 app.use(bodyParser.urlencoded({ extended: true }))
 app.use(bodyParser.json())
 
-for (const router of config().routers) {
+for (const router of (await config()).routers) {
     const express_router = express.Router()
     for (const route of router.routes) {
         express_router.route(route.route)[route.method.toLowerCase()]((route.middleware || ((_, __, next) => next())), (route?.controller || ((req, res) => res.send(req.path))))
