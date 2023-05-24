@@ -4,7 +4,7 @@ import url from 'url'
 import path from 'path'
 import fs from 'fs/promises'
 import { main, nav, todo_page } from './html/index.js'
-import { todo } from './database/index.js'
+import db_files from './database/index.js'
 import pg from 'pg'
 import { createHash } from 'crypto'
 
@@ -42,6 +42,9 @@ const config = async () => {
         res.setHeader("Content-Security-Policy", `default-src 'self'; script-src '${script_hash}'; style-src '${style_hash}'`);
         res.status(200).send(html)
     }
+    const db = {
+
+    }
 
     const routers = [
         {
@@ -66,7 +69,6 @@ const config = async () => {
 
                             const data = await pool.query(`SELECT * from users where user_name = $1`, ['andrewjudd'])
                             // client.end()
-                            console.log(data.rows)
                             csp(main({ title: 'home', components: [nav] }), res)
                         } catch (error) {
                             console.log(error)
@@ -104,7 +106,7 @@ const config = async () => {
                     route: '/todo',
                     method: 'GET',
                     controller: async (req, res) => {
-                        csp(main({ title: 'Todo List', components: [nav, async () => await todo_page(database)] }), res)
+                        csp(main({ title: 'Todo List', components: [nav, async () => await todo_page(db)] }), res)
                     }
                 }
             ]
@@ -123,6 +125,7 @@ const config = async () => {
         }
     ]
 
+
     const create_db_endpoint = async ({ route, method, controller }) => {
         routers[1].routes.push({
             route: `${route}`,
@@ -131,19 +134,44 @@ const config = async () => {
         })
     }
 
-    // file imports
-    const database_paths = [{ path: 'todo', funcs: todo }]
+    const create_api_request = async ({ route, method }) => {
+        let base_url = 'http://localhost:3001/api/v1'
+        db[route.slice(1)] = async () => {
+            // add body to requests
 
-    let database = {}
-    for (const { path, funcs } of database_paths) {
-        console.log(path)
-        database[path] = {}
-        for (const key in funcs) {
-            await funcs[key](query, create_db_endpoint)
+            return `
+        const render = async (body) => {
+        let ${route.slice(1)} = await fetch("${base_url}${route}", {method: "${method}", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)})
+         ${route.slice(1)} = await ${route.slice(1)}.json()
+         return ${route.slice(1)}
+        }`
+        }
+        if (!db.funcs) {
+            db.funcs = {}
+        }
+        db.funcs[route.slice(1)] = async () => {
+            const response = await fetch(base_url + route, { method })
+            const data = await response.json()
+            return data
         }
     }
 
-    return { routers, database }
+    // file imports
+    const __dirname = url.fileURLToPath(new URL('.', import.meta.url))
+    const paths = await fs.readdir(__dirname + '/database')
+
+    const database_paths = []
+    for (const path of paths) {
+        if (path === 'index.js') continue
+        database_paths.push({ path, funcs: db_files[path.split('.')[0]] })
+    }
+    for (const { funcs } of database_paths) {
+        for (const key in funcs) {
+            await funcs[key](query, create_db_endpoint, create_api_request)
+        }
+    }
+
+    return { routers, db }
 }
 
 export default config

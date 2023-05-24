@@ -1,15 +1,17 @@
 export default async function html({ title, components }) {
 
     const render = async () => {
-        let renders = {}
-        for (const run of ['html', 'style', 'script']) {
-            renders[run] = (await Promise.all(components?.map(async (item) => {
-                if ((await item())[run]) {
-                    return (await item())[run]
-                }
-            }))).join('')
+        let final = { html: '', style: '', script: '' }
+        let renders = []
+        renders = (await Promise.all(components?.map(async (item) => {
+            return await item()
+        })))
+        for (const run of renders) {
+            final.html += run?.html || ''
+            final.style += run?.style || ''
+            final.script += run?.script || ''
         }
-        return renders
+        return final
     }
     const result = await render()
 
